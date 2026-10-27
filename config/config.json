@@ -1,0 +1,9 @@
+{
+  "languageModel": "claude-cli",
+  "model": "claude-opus-5-5",
+  "pollMinutes": 15,
+  "quietHours": { "from": "22:00", "to": "08:00", "tz": "Europe/Kyiv" },
+  "rejectedSummaryTime": "09:00",
+  "lookbackHours": 24,
+  "maxApplicants": 50
+}
