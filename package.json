@@ -10,6 +10,10 @@
   },
   "scripts": {
     "track": "node src/app/tracker.ts",
+    "launchd:install": "node scripts/install-launchd.ts",
+    "launchd:uninstall": "launchctl bootout gui/$(id -u)/local.job-tracker; rm -f ~/Library/LaunchAgents/local.job-tracker.plist",
+    "launchd:status": "launchctl print gui/$(id -u)/local.job-tracker",
+    "logs": "tail -f logs/tracker.log logs/tracker.err.log | pino-pretty",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint --flag unstable_native_nodejs_ts_config ."
