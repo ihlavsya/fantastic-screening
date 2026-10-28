@@ -21,6 +21,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await database.jobs.deleteMany({});
   vi.restoreAllMocks();
+  vi.spyOn(logger, "info").mockImplementation(() => undefined);
 });
 
 afterAll(async () => {
@@ -28,11 +29,11 @@ afterAll(async () => {
 });
 
 describe("discoverJobs", () => {
-  it("saves a job that passes every rule as possible, with its details", async () => {
+  it("saves a job that passes every rule as to_screen, with its details", async () => {
     await runWith(fakeSource([listedJob("1")]));
     expect(await database.jobs.findOne({ _id: "fake:1" })).toMatchObject({
       title: "React Developer",
-      status: JobStatus.possible,
+      status: JobStatus.toScreen,
       details: DETAILS,
       seenAt: NOW,
     });
@@ -63,13 +64,33 @@ describe("discoverJobs", () => {
     expect(source.fetchDetails).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [49, JobStatus.possible],
-    [50, JobStatus.tooManyApplicants],
-    [undefined, JobStatus.possible],
-  ])("with %j applicants → %s", async (applicants, status) => {
-    await runWith(fakeSource([listedJob("1")], () => Promise.resolve({ ...DETAILS, applicants })));
-    expect(await database.jobs.findOne({ _id: "fake:1" })).toMatchObject({ status });
+  it("logs per-source counts of what happened to the jobs", async () => {
+    const jobs = [
+      listedJob("1"),
+      listedJob("2", { title: "Tech Lead" }),
+      listedJob("3", { postedAt: new Date("2026-10-26T11:59:00Z") }),
+    ];
+    await runWith(fakeSource(jobs));
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "discover.source_done",
+        fetched: 3,
+        recent: 2,
+        unseen: 2,
+        results: { to_screen: 1, prefilter_rejected: 1 },
+      }),
+      "source done",
+    );
+  });
+
+  it("saves a details reject with its reason and details", async () => {
+    const details = { ...DETAILS, applicants: 52 };
+    await runWith(fakeSource([listedJob("1")], () => Promise.resolve(details)));
+    expect(await database.jobs.findOne({ _id: "fake:1" })).toMatchObject({
+      status: JobStatus.detailsRejected,
+      rejectReason: "52 applicants",
+      details,
+    });
   });
 
   it("skips and logs a job whose details fail, and keeps going", async () => {

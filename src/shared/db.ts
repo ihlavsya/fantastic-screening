@@ -3,7 +3,14 @@ import type { Job } from "./job.ts";
 
 export type Database = {
   jobs: Collection<Job>;
+  state: Collection<ClaudeState>;
   close: () => Promise<void>;
+};
+
+export type ClaudeState = {
+  _id: "claude";
+  isFailing: boolean;
+  since: Date;
 };
 
 const SERVER_SELECTION_TIMEOUT_MS = 5_000;
@@ -14,8 +21,10 @@ export async function connectToDatabase(mongoUri: string): Promise<Database> {
     ignoreUndefined: true,
   });
   await client.connect();
+  const db = client.db();
   return {
-    jobs: client.db().collection<Job>("jobs"),
+    jobs: db.collection<Job>("jobs"),
+    state: db.collection<ClaudeState>("state"),
     close: () => client.close(),
   };
 }

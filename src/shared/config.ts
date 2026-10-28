@@ -26,6 +26,7 @@ export type Secrets = {
   telegramBotToken: string;
   telegramChatId: string;
   mongoUri: string;
+  claudeCodeOauthToken: string;
 };
 
 export const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
@@ -45,6 +46,7 @@ function loadSecrets(): Secrets {
     telegramBotToken: requireEnv("TELEGRAM_BOT_TOKEN"),
     telegramChatId: requireEnv("TELEGRAM_CHAT_ID"),
     mongoUri: requireEnv("MONGO_URI"),
+    claudeCodeOauthToken: requireEnv("CLAUDE_CODE_OAUTH_TOKEN"),
   };
 }
 

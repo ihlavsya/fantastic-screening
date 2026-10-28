@@ -82,6 +82,7 @@ describe("fetchDetails", () => {
       city: "Kyiv",
       workFormat: "hybrid",
       applicants: 4,
+      yearsRequired: 0.5,
     });
     expect(gateway.fetchJob).toHaveBeenCalledWith("854148");
   });

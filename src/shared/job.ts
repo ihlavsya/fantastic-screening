@@ -3,6 +3,8 @@ export type Job = ListedJob & {
   details?: JobDetails;
   status: JobStatus;
   rejectReason?: string;
+  assessment?: Assessment;
+  screeningAttempts?: number;
   seenAt: Date;
 };
 
@@ -23,6 +25,7 @@ export type JobDetails = {
   city?: string;
   workFormat?: WorkFormat;
   applicants?: number;
+  yearsRequired?: number;
 };
 
 export type Salary = {
@@ -30,13 +33,20 @@ export type Salary = {
   max?: number;
 };
 
+export type Assessment = {
+  fitReasons: string[];
+  concerns: string[];
+};
+
 export type WorkFormat = "remote" | "hybrid" | "office" | (string & Record<never, never>);
 
 export const JobStatus = {
   prefilterRejected: "prefilter_rejected",
-  tooManyApplicants: "too_many_applicants",
-  possible: "possible",
-  rejected: "rejected",
+  detailsRejected: "details_rejected",
+  toScreen: "to_screen",
+  screeningRejected: "screening_rejected",
+  screeningFailed: "screening_failed",
+  toPing: "to_ping",
   pinged: "pinged",
   applied: "applied",
   badFit: "bad_fit",

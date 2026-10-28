@@ -62,6 +62,7 @@ describe("translateJobDetails", () => {
       city: "Kyiv",
       workFormat: "hybrid",
       applicants: 4,
+      yearsRequired: 0.5,
     });
   });
 
@@ -72,6 +73,7 @@ describe("translateJobDetails", () => {
       city: "Kyiv, Ivano-Frankivsk, Lviv",
       workFormat: "remote",
       applicants: 4,
+      yearsRequired: 7,
     });
   });
 
@@ -100,6 +102,18 @@ describe("translateJobDetails", () => {
     ])("%j → %j", (salaryFields, salary) => {
       const job = { ...MINIMAL_JOB, ...salaryFields };
       expect(translateJobDetails(job).salary).toEqual(salary);
+    });
+  });
+
+  describe("years required", () => {
+    it.each([
+      [{ experience: 0 }, 0],
+      [{ experience: 3.5 }, 3.5],
+      [{ experience: null }, undefined],
+      [{}, undefined],
+    ])("%j → %j", (experienceField, yearsRequired) => {
+      const job = { ...MINIMAL_JOB, ...experienceField };
+      expect(translateJobDetails(job).yearsRequired).toBe(yearsRequired);
     });
   });
 

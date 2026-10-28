@@ -13,9 +13,25 @@ const HTML_ESCAPES = new Map([
   ["<", "&lt;"],
   [">", "&gt;"],
 ]);
+const MAX_FAILURE_CHARS = 500;
+
+export const CLAUDE_BACK_MESSAGE = "✅ Claude back";
+
+export function formatClaudeFailing(failureMessage: string): string {
+  const shortMessage =
+    failureMessage.length > MAX_FAILURE_CHARS ? `${failureMessage.slice(0, MAX_FAILURE_CHARS)}…` : failureMessage;
+  return `⚠️ Claude failing: ${escapeHtml(shortMessage)}`;
+}
 
 export function formatPing(job: Job, now: Date): string {
-  return [formatHeadline(job), formatTerms(job.details), formatTiming(job, now), `🔗 ${escapeHtml(job.link)}`]
+  return [
+    formatHeadline(job),
+    formatTerms(job.details),
+    formatTiming(job, now),
+    formatPoints("✅ fit", job.assessment?.fitReasons),
+    formatPoints("⚠️ concerns", job.assessment?.concerns),
+    `🔗 ${escapeHtml(job.link)}`,
+  ]
     .filter((line) => line !== undefined)
     .join("\n");
 }
@@ -27,7 +43,9 @@ function formatHeadline({ title, isEuRemote, details }: Job): string {
 }
 
 function formatTerms(details: JobDetails | undefined): string | undefined {
-  const parts = [formatSalary(details?.salary), formatPlace(details)].filter((part) => part !== undefined);
+  const parts = [formatSalary(details?.salary), formatPlace(details), formatYears(details?.yearsRequired)].filter(
+    (part) => part !== undefined,
+  );
   return parts.length === 0 ? undefined : parts.join(" · ");
 }
 
@@ -50,6 +68,15 @@ function formatPlace(details: JobDetails | undefined): string | undefined {
 
 function formatWorkFormat(workFormat: WorkFormat): string {
   return WORK_FORMAT_LABELS.get(workFormat) ?? workFormat;
+}
+
+function formatYears(yearsRequired: number | undefined): string | undefined {
+  return yearsRequired === undefined ? undefined : `🎯 ${String(yearsRequired)} yrs`;
+}
+
+function formatPoints(label: string, points: string[] | undefined): string | undefined {
+  if (points === undefined || points.length === 0) return undefined;
+  return `${label}: ${escapeHtml(points.join("; "))}`;
 }
 
 function formatTiming({ postedAt, details }: Job, now: Date): string {

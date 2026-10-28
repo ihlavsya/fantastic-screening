@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import type { JobDetails, ListedJob, Salary, WorkFormat } from "#shared/job.ts";
+import { checkIsRecord, checkIsString } from "#shared/type-guards.ts";
 
 export type Feed = {
   categories: string[];
@@ -89,6 +90,7 @@ export function translateJobDetails(job: unknown): JobDetails {
     city: readOptionalString(jobRecord, "location"),
     workFormat: translateWorkFormat(readOptionalString(jobRecord, "work_format")),
     applicants: readNumber(jobRecord, "applications_count"),
+    yearsRequired: readOptionalNumber(jobRecord, "experience"),
   };
 }
 
@@ -131,6 +133,11 @@ function readNumber(record: Record<string, unknown>, key: string): number {
   return value;
 }
 
+function readOptionalNumber(record: Record<string, unknown>, key: string): number | undefined {
+  if (record[key] === undefined || record[key] === null) return undefined;
+  return readNumber(record, key);
+}
+
 function readPositiveNumber(record: Record<string, unknown>, key: string): number | undefined {
   if (record[key] === undefined || record[key] === null) return undefined;
   const value = readNumber(record, key);
@@ -146,12 +153,4 @@ function readDate(record: Record<string, unknown>, key: string): Date {
 function readOptionalArray(record: Record<string, unknown>, key: string): unknown[] {
   const value = record[key];
   return Array.isArray(value) ? value : [];
-}
-
-function checkIsRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function checkIsString(value: unknown): value is string {
-  return typeof value === "string";
 }
