@@ -1,4 +1,4 @@
-import type { Job, JobDetails, Salary, WorkFormat } from "#shared/job.ts";
+import type { DraftFailure, Job, JobDetails, Salary, WorkFormat } from "#shared/job.ts";
 
 const MS_PER_MINUTE = 60_000;
 const MINUTES_PER_HOUR = 60;
@@ -13,6 +13,10 @@ const HTML_ESCAPES = new Map([
   ["<", "&lt;"],
   [">", "&gt;"],
 ]);
+const DRAFT_FAILURE_LABELS: Record<DraftFailure, string> = {
+  claude_down: "Claude down",
+  call_failed: "call failed",
+};
 const MAX_FAILURE_CHARS = 500;
 
 export const CLAUDE_BACK_MESSAGE = "✅ Claude back";
@@ -24,16 +28,22 @@ export function formatClaudeFailing(failureMessage: string): string {
 }
 
 export function formatPing(job: Job, now: Date): string {
-  return [
+  const summary = [
     formatHeadline(job),
     formatTerms(job.details),
     formatTiming(job, now),
     formatPoints("✅ fit", job.assessment?.fitReasons),
     formatPoints("⚠️ concerns", job.assessment?.concerns),
     `🔗 ${escapeHtml(job.link)}`,
+    formatDraftFailure(job.draftFailure),
   ]
     .filter((line) => line !== undefined)
     .join("\n");
+  return job.draft === undefined ? summary : `${summary}\n\n<pre>${escapeHtml(job.draft)}</pre>`;
+}
+
+function formatDraftFailure(draftFailure: DraftFailure | undefined): string | undefined {
+  return draftFailure === undefined ? undefined : `✍️ no draft: ${DRAFT_FAILURE_LABELS[draftFailure]}`;
 }
 
 function formatHeadline({ title, isEuRemote, details }: Job): string {

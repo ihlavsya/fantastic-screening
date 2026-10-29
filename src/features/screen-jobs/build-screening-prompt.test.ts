@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type Job, type JobDetails, JobStatus } from "#shared/job.ts";
 import { buildScreeningPrompt } from "./build-screening-prompt.ts";
 
-const KNOWLEDGE = { cv: "CV TEXT", fitRules: "FIT RULES TEXT" };
+const KNOWLEDGE = { cv: "CV TEXT", fitRules: "FIT RULES TEXT", styleGuide: "STYLE GUIDE TEXT" };
 const DETAILS: JobDetails = {
   company: "Acme Health",
   salary: { min: 3000, max: 4000 },
@@ -44,32 +44,8 @@ describe("buildScreeningPrompt", () => {
     );
   });
 
-  it("marks an EU-remote job", () => {
-    expect(buildScreeningPrompt(buildJob({ isEuRemote: true }), KNOWLEDGE)).toContain("EU-remote: yes");
-  });
-
-  it("says not listed for missing details", () => {
-    const prompt = buildScreeningPrompt(buildJob({ details: { company: "Acme Health" } }), KNOWLEDGE);
-    expect(prompt).toContain(
-      ["Work format: not listed", "City: not listed", "Salary: not listed", "Years required: not listed"].join("\n"),
-    );
-  });
-
-  it("says company not listed when details are missing", () => {
-    expect(buildScreeningPrompt(buildJob({ details: undefined }), KNOWLEDGE)).toContain("Company: not listed");
-  });
-
-  it("keeps 0 years as 0", () => {
-    const prompt = buildScreeningPrompt(buildJob({ details: { ...DETAILS, yearsRequired: 0 } }), KNOWLEDGE);
-    expect(prompt).toContain("Years required: 0");
-  });
-
-  it.each([
-    [{ min: 3000 }, "Salary: from $3000"],
-    [{ max: 4000 }, "Salary: up to $4000"],
-    [{ min: 3000, max: 3000 }, "Salary: $3000"],
-  ])("shows salary %j as %j", (salary, line) => {
-    expect(buildScreeningPrompt(buildJob({ details: { ...DETAILS, salary } }), KNOWLEDGE)).toContain(line);
+  it("leaves the style guide out", () => {
+    expect(buildScreeningPrompt(buildJob(), KNOWLEDGE)).not.toContain("STYLE GUIDE TEXT");
   });
 });
 

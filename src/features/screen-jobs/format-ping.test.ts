@@ -130,6 +130,32 @@ describe("formatPing", () => {
   });
 });
 
+describe("formatPing draft", () => {
+  it("puts the draft in a pre block after a blank line", () => {
+    const ping = formatPing(buildJob({ draft: "I'm a full-stack developer.\n\nStack: React." }), NOW);
+    expect(ping).toMatch(
+      /🔗 https:\/\/djinni\.co\/jobs\/123456-middle-full-stack\/\n\n<pre>I'm a full-stack developer\.\n\nStack: React\.<\/pre>$/,
+    );
+  });
+
+  it("escapes the draft", () => {
+    expect(formatPing(buildJob({ draft: "R&D <React>" }), NOW)).toContain("<pre>R&amp;D &lt;React&gt;</pre>");
+  });
+
+  it.each([
+    ["claude_down", "✍️ no draft: Claude down"],
+    ["call_failed", "✍️ no draft: call failed"],
+  ] as const)("says why there is no draft on %s", (draftFailure, line) => {
+    expect(formatPing(buildJob({ draftFailure }), NOW).split("\n").at(-1)).toBe(line);
+  });
+
+  it("shows neither a draft nor a no-draft line for a job from before drafts", () => {
+    const ping = formatPing(buildJob(), NOW);
+    expect(ping).not.toContain("<pre>");
+    expect(ping).not.toContain("✍️");
+  });
+});
+
 describe("formatClaudeFailing", () => {
   it("escapes the failure message", () => {
     expect(formatClaudeFailing("model <x> not found")).toBe("⚠️ Claude failing: model &lt;x&gt; not found");

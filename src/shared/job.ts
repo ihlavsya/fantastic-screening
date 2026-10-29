@@ -4,6 +4,8 @@ export type Job = ListedJob & {
   status: JobStatus;
   rejectReason?: string;
   assessment?: Assessment;
+  draft?: string;
+  draftFailure?: DraftFailure;
   screeningAttempts?: number;
   seenAt: Date;
 };
@@ -38,6 +40,8 @@ export type Assessment = {
   concerns: string[];
 };
 
+export type DraftFailure = "claude_down" | "call_failed";
+
 export type WorkFormat = "remote" | "hybrid" | "office" | (string & Record<never, never>);
 
 export const JobStatus = {
@@ -46,6 +50,7 @@ export const JobStatus = {
   toScreen: "to_screen",
   screeningRejected: "screening_rejected",
   screeningFailed: "screening_failed",
+  toDraft: "to_draft",
   toPing: "to_ping",
   pinged: "pinged",
   applied: "applied",

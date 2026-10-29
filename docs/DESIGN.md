@@ -8,7 +8,7 @@ Visual design pages (artifacts, not in the repo): [v0–v1 Job Tracker Design](h
 
 - **v0 (done)**: djinni → code prefilter → applicants < 50 → Telegram ping. No Claude. Runs on my mac.
 - **v1 (done)**: Claude screening inside `screen-jobs` (fit or reject, no draft), junior/intern filter, status renames.
-- **v2 (now)**: draft in a 2nd Claude call, only for fits, inside `screen-jobs`. New status `to_draft`.
+- **v2 (done)**: draft in a 2nd Claude call, only for fits, inside `screen-jobs`. New status `to_draft`.
 - **Later**: daily digest, feedback skills, DOU source, move to a server.
 
 ## Machine and data
@@ -23,70 +23,6 @@ Everything runs on my mac. No server for now (arb is closed).
 
 - No GitHub repo.
 - View records: Compass on `localhost:27017`, db `job-hunt`.
-
-## Folder structure
-
-`*` = built in v0. Others are marked with the version they come in.
-
-```
-auto-apply-for-positions/
-  docs/                            PRODUCT.md, DESIGN.md
-  knowledge/                       cv.md, style-guide.md, fit-rules.md
-  config/                          config.json, .env
-  logs/                          * launchd stdout/stderr
-  src/
-    features/
-      discover-jobs/             * step 1: sources → last 24h → unseen → prefilter → details → details filter → save to_screen
-        discover-jobs.ts         * handler
-        prefilter.ts             * pure: category, title, keyword rules
-        details-filter.ts          v1, pure: applicants ≥ maxApplicants, junior/intern pay < $1k
-        job-source.ts            * JobSource type alias
-        djinni/                  * RSS feeds + applicant count (v1: + years required)
-        (dou/)                     later, same type
-      screen-jobs/               * step 2: each to_screen → Claude → to_draft | screening_rejected; each to_draft → Claude → to_ping; each to_ping → ping → pinged
-        screen-jobs.ts           * handler
-        format-ping.ts           * pure: job (+ Assessment in v1, + draft / no-draft line in v2) → ping text
-        load-knowledge.ts          v1: reads cv.md + fit-rules.md (style-guide.md from v2)
-        build-screening-prompt.ts  v1, pure: job + cv + fit rules → prompt (v2: renamed from build-prompt.ts)
-        parse-assessment.ts        v1, pure: model answer JSON → Assessment or failure (tolerant reader, model-agnostic)
-        build-draft-prompt.ts      v2, pure: job + assessment + cv + style guide → prompt
-        parse-draft.ts             v2, pure: DRAFT_SCHEMA + model answer → draft or failure (tolerant reader)
-        language-model.ts          v1: LanguageModel type alias + its result type (answer | failure + raw output)
-        claude-cli/                v1 impl (`claude -p`) + health check + mapper: CLI envelope → LanguageModel result
-      send-daily-digest/           later, 09:00: yesterday's rejects + screening_failed → 1 msg
-        send-daily-digest.ts
-        format-digest.ts           pure
-      save-final-message/          later, skill `/final-msg`
-        save-final-message.ts      handler: save final + comment summary → status applied
-        match-draft.ts             pure: pasted text → closest stored draft
-      save-fit-verdict/            later, skills `/bad-fit` / `/should-have-pinged`
-        save-fit-verdict.ts
-    shared/                        only what 2+ slices need
-      job.ts                     * Job type alias + status values
-      db.ts                      * Mongo client + `jobs` collection (v1: + `state` collection)
-      telegram.ts                * send msg, applies quiet hours
-      quiet-hours.ts             * pure: is now inside quiet hours
-      config.ts                  * loads config/config.json + .env (v1: + CLAUDE_CODE_OAUTH_TOKEN)
-    app/
-      tracker.ts                 * ONE pass: discover-jobs → screen-jobs, then exit
-      cli.ts                       later: routes skill commands → save-final-message / save-fit-verdict
-  scripts/
-    install-launchd.ts           * snapshots code to dist/, writes + loads the launchd plist
-  skill/                           later: Claude Code skills
-```
-
-Principles (vertical slices):
-
-- One folder per use case, named by what it does, with everything it needs inside: fetching, rules, db queries, message format. A use case = what triggers it (15-min tick, 09:00, a skill command).
-- Changing one feature = touching one folder.
-- Slices never import each other. They share only `shared/`.
-- Code moves to `shared/` only once a 2nd slice needs it.
-- Slices query Mongo directly through `shared/db.ts`. No repository layer.
-- Contracts (`type` alias, never `interface`) only where a swap is real: `JobSource` (djinni → DOU), `LanguageModel` (CLI → API).
-- Logic vs I/O: pure files (`prefilter`, `details-filter`, `format-ping`, `quiet-hours`, `build-screening-prompt`, `parse-assessment`, `build-draft-prompt`, `parse-draft`, djinni RSS parser) hold all decisions → unit tests. I/O wrappers (djinni fetch, Mongo, Telegram, Claude CLI) stay thin, no logic.
-- Don't build what isn't needed yet: `(dou/)`, `(anthropic-api/)`, later files are created only when their version starts.
-
-Adding a site = new folder under `features/discover-jobs/` implementing `JobSource` + adding it to the source list in `discover-jobs.ts`. Nothing else changes.
 
 ## Sources
 
@@ -151,64 +87,11 @@ Naming rule: a drop is `<stage>_rejected`, a waiting state is `to_<next step>`.
 | `pinged`             | screen-jobs     | sent to Telegram                                                                            | no         |
 | `applied`, `bad_fit` | feedback skills | later                                                                                       | final      |
 
-- v1 renames: `possible` → `to_screen`, `rejected` → `screening_rejected`, `too_many_applicants` folds into `details_rejected`. Old rows keep old names (they get deleted anyway).
 - `rejectReason` is the one field for every reject stage. Status = where it stopped, reason = why.
 - **Every run is a backfill.** Each run looks at the last 24h and skips ids already in Mongo. No first-run flag. After the mac sleeps, the next run catches up on everything from the last 24h. Sleep longer than 24h → older jobs are lost (ok).
 - **< 50 applicants** applies to every job, one rule. Fresh jobs pass anyway, since a run sees them within ~15 min.
 - **Status between phases = crash safety.** A job saved `to_ping` but not sent (mac slept mid-run, Telegram down) gets sent next run, and Claude never judges it twice. Worst case: one duplicate ping if the mac sleeps between send and status update.
 - Every seen job is saved, incl. rejected ones, so it's never re-checked.
-
-## Screening (Claude, v1)
-
-- `LanguageModel` type alias. v1 = `claude-cli`. Switch via config `languageModel: "claude-cli" | "anthropic-api"`.
-- Claude judges **every** `to_screen` job. One **fresh, stateless** `claude -p` call per job, no shared session.
-- Call: `claude -p --model <model> --tools "" --setting-sources "" --strict-mcp-config --no-session-persistence --output-format json --json-schema <schema>`, run from a fresh temp dir (`mkdtemp` in `os.tmpdir()`): the project sits under `~/Documents/Projects/CLAUDE.md`, which must not leak into the prompt. Not `--bare`: it ignores OAuth (API key only).
-- Timeout: 120s per call. A timeout counts as a failure.
-- Boundary: `claude-cli/` maps the CLI envelope into the `LanguageModel` result (answer JSON, or failure + raw output). Nothing outside `claude-cli/` reads CLI fields (`is_error`, `structured_output`, …), so swapping to `anthropic-api` = a new mapper only.
-- Model = config value, default `claude-opus-5-5`.
-- Input: job text, `isEuRemote`, details (incl. `yearsRequired`), `cv.md`, `fit-rules.md`. Never `style-guide.md` (only the draft call reads it).
-- Output (`--json-schema`):
-
-| Field          | Kind    | Means                                                                            | Shows up as                   |
-| -------------- | ------- | -------------------------------------------------------------------------------- | ----------------------------- |
-| `isFit`        | verdict | yes/no on the whole job                                                          | ping, or `screening_rejected` |
-| `rejectReason` | opinion | one line on why not, only when `isFit` is false                                  | job's `rejectReason`          |
-| `fitReasons[]` | opinion | 1–3 short points on why it fits                                                  | ✅ line                       |
-| `concerns[]`   | opinion | anything to check on a fit: skill gaps, stretch asks, terms ("hybrid 3 days/wk") | ⚠️ line                       |
-
-- Years are not asked from Claude: they come from djinni's `experience` field (`details.yearsRequired`).
-- Stored on the job: `rejectReason`, `assessment = { fitReasons, concerns }`, `screeningAttempts`. `assessment` has no reason of its own.
-- Answer check = tolerant reader: requires only `isFit` (boolean) and `rejectReason` when `isFit` is false. Missing lists → `[]`, extra fields ignored.
-- v2 draft = a separate call (see Drafting), not a field in this answer.
-- Auth: `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` (Pro/Max subscription). `config.ts` doesn't load it yet → load it and pass it to the child process env.
-- Cost: the CLI adds ~4.2k tokens of its own system prompt even with tools off → ~7k input tokens per call. ~8–16 calls/day (16 jobs passed the prefilter in the last 24h, 55 over 7 days, measured 27 Oct 2026).
-
-### CLI output shapes (seen on 2.1.311, 28 Oct 2026)
-
-- **Success**: exit 0, `is_error: false`, answer already parsed in `structured_output` (same JSON as a string in `result`).
-- **Error envelope**: exit 1, still one JSON object on stdout: `is_error: true`, `api_error_status` (404 for a bad model), `terminal_reason: "api_error"`, message in `result`. `subtype` still says `"success"` → never use it.
-- **Anything else** on stdout (not JSON, not an object, fields missing) → log `claude.output_unknown` with the full run (stdout, stderr, exit error). New shapes are learned from logs, not guessed.
-- Timeout and process errors with no stdout (e.g. binary not found) are known failures, not `claude.output_unknown`: they are not new shapes to learn.
-- Usage limit: expected to be the same envelope with another status code. Not verified.
-
-### Failures: who is to blame
-
-A failed call (error envelope, bad answer, unknown output, timeout) can't tell on its own whether Claude or the job caused it. So after any failure → **health check**: a trivial "reply ok" call with a tiny schema, same model.
-
-| Health check | Blame    | Effect                                                                                         |
-| ------------ | -------- | ---------------------------------------------------------------------------------------------- |
-| fails        | Claude   | stop screening (ping loop still runs), job stays `to_screen`, no try counted, failing flag on  |
-| passes       | this job | `screeningAttempts` +1, stays `to_screen`, retried next pass. 3rd failure → `screening_failed` |
-
-- A network blip that gets blamed on the job is fine: the job is judged again next pass.
-- Every failure is logged with the raw CLI output, the job id and the full prompt (the prompt can't be rebuilt later, since knowledge files change). Logs stay local + gitignored, but they contain CV text.
-
-### Failing flag
-
-- Mongo `state` collection, one doc: `{ _id: "claude", isFailing, since }`.
-- Flag off + health check fails → flag on, send `⚠️ Claude failing: <result text>`, stop screening.
-- Flag on → every pass starts with the health check, even when no job is `to_screen` (so `✅ Claude back` doesn't wait for a new job). Fails → stop screening quietly (one tiny call per 15 min during an outage, no repeat message).
-- Flag on + health check works → flag off, send `✅ Claude back`, go on screening. Node reads the code fresh each run, so a code fix ends the episode on the next pass. Never flipped by hand.
 
 ## Drafting (v2)
 
@@ -263,6 +146,7 @@ Skills run `node src/app/cli.ts <command>` locally for records (`/final-msg` →
 - Node 24 runs `.ts` directly (type stripping) → no build step. Only erasable TS syntax (no enums, no namespaces).
 - Reads the snapshot `dist/config/config.json` on each run, so repo edits apply after `npm run launchd:install`.
 - `config/config.json`:
+
   ```JSON
   {
     "languageModel": "claude-cli",
@@ -274,7 +158,9 @@ Skills run `node src/app/cli.ts <command>` locally for records (`/final-msg` →
     "maxApplicants": 50
   }
   ```
+
   - `rejectedSummaryTime` is unused until the digest.
+
 - `config/.env`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `MONGO_URI` (`mongodb://127.0.0.1:27017/job-hunt`), `CLAUDE_CODE_OAUTH_TOKEN`.
 
 ## Setup status
