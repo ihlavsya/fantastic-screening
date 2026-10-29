@@ -8,7 +8,8 @@ import { buildPlist } from "./install-launchd.ts";
 const AGENT = {
   label: "local.job-tracker",
   nodePath: "/usr/local/bin/node",
-  projectRoot: "/Users/me/Projects/auto-apply-for-positions",
+  projectRoot: "/Users/me/Projects/auto-apply-for-positions/dist",
+  logDir: "/Users/me/Projects/auto-apply-for-positions/logs",
   intervalSeconds: 900,
 };
 
@@ -21,12 +22,12 @@ describe("buildPlist", () => {
     expect(() => execFileSync("plutil", ["-lint", path], { stdio: "pipe" })).not.toThrow();
   });
 
-  it("runs the tracker with node from the project root", () => {
+  it("runs the tracker with node from the snapshot", () => {
     expect(plist).toContain(
       "<array>\n    <string>/usr/local/bin/node</string>\n    <string>src/app/tracker.ts</string>\n  </array>",
     );
     expect(plist).toContain(
-      "<key>WorkingDirectory</key>\n  <string>/Users/me/Projects/auto-apply-for-positions</string>",
+      "<key>WorkingDirectory</key>\n  <string>/Users/me/Projects/auto-apply-for-positions/dist</string>",
     );
   });
 
@@ -35,7 +36,7 @@ describe("buildPlist", () => {
     expect(plist).toContain("<key>RunAtLoad</key>\n  <true/>");
   });
 
-  it("writes stdout and stderr into the project logs folder", () => {
+  it("writes stdout and stderr into the log folder, outside the snapshot", () => {
     expect(plist).toContain("<string>/Users/me/Projects/auto-apply-for-positions/logs/tracker.log</string>");
     expect(plist).toContain("<string>/Users/me/Projects/auto-apply-for-positions/logs/tracker.err.log</string>");
   });

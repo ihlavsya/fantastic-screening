@@ -4,7 +4,7 @@ import type { ClaudeState } from "#shared/db.ts";
 import { type Job, JobStatus } from "#shared/job.ts";
 import { logger } from "#shared/logger.ts";
 import type { Telegram } from "#shared/telegram.ts";
-import { buildPrompt } from "./build-prompt.ts";
+import { buildScreeningPrompt } from "./build-screening-prompt.ts";
 import { CLAUDE_BACK_MESSAGE, formatClaudeFailing, formatPing } from "./format-ping.ts";
 import type { LanguageModel, ModelFailure } from "./language-model.ts";
 import { type Knowledge, loadKnowledge } from "./load-knowledge.ts";
@@ -64,7 +64,7 @@ async function checkIsClaudeReady(context: ScreenJobsContext): Promise<boolean> 
 }
 
 async function screenJob(job: Job, knowledge: Knowledge, context: ScreenJobsContext): Promise<ScreeningProgress> {
-  const prompt = buildPrompt(job, knowledge);
+  const prompt = buildScreeningPrompt(job, knowledge);
   const answer = await askAboutJob(prompt, context.languageModel);
   if (answer.isValid) {
     await saveVerdict(job, answer.verdict, context.jobs);

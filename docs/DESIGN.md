@@ -2,11 +2,13 @@
 
 See `PRODUCT.md` for what it does. This file covers how.
 
+Visual design pages (artifacts, not in the repo): [v0–v1 Job Tracker Design](https://claude.ai/artifact/W3YuMiq4StG787vZV4stZz) · [v2 Job Tracker v2 Design](https://claude.ai/artifact/ChzxDZTKJkYsSM7zG3dNYj).
+
 ## Versions
 
 - **v0 (done)**: djinni → code prefilter → applicants < 50 → Telegram ping. No Claude. Runs on my mac.
-- **v1 (now)**: Claude screening inside `screen-jobs` (fit or reject, no draft), junior/intern filter, status renames.
-- **v2**: draft as one more field in the same Claude answer.
+- **v1 (done)**: Claude screening inside `screen-jobs` (fit or reject, no draft), junior/intern filter, status renames.
+- **v2 (now)**: draft in a 2nd Claude call, only for fits, inside `screen-jobs`. New status `to_draft`.
 - **Later**: daily digest, feedback skills, DOU source, move to a server.
 
 ## Machine and data
@@ -28,7 +30,7 @@ Everything runs on my mac. No server for now (arb is closed).
 
 ```
 auto-apply-for-positions/
-  docs/                            PRODUCT.md, DESIGN.md, design.html
+  docs/                            PRODUCT.md, DESIGN.md
   knowledge/                       cv.md, style-guide.md, fit-rules.md
   config/                          config.json, .env
   logs/                          * launchd stdout/stderr
@@ -41,12 +43,14 @@ auto-apply-for-positions/
         job-source.ts            * JobSource type alias
         djinni/                  * RSS feeds + applicant count (v1: + years required)
         (dou/)                     later, same type
-      screen-jobs/               * step 2: each to_screen → Claude → to_ping | screening_rejected; each to_ping → ping → pinged
+      screen-jobs/               * step 2: each to_screen → Claude → to_draft | screening_rejected; each to_draft → Claude → to_ping; each to_ping → ping → pinged
         screen-jobs.ts           * handler
-        format-ping.ts           * pure: job (+ Assessment in v1) → ping text
+        format-ping.ts           * pure: job (+ Assessment in v1, + draft / no-draft line in v2) → ping text
         load-knowledge.ts          v1: reads cv.md + fit-rules.md (style-guide.md from v2)
-        build-prompt.ts            v1, pure: job + knowledge → prompt
+        build-screening-prompt.ts  v1, pure: job + cv + fit rules → prompt (v2: renamed from build-prompt.ts)
         parse-assessment.ts        v1, pure: model answer JSON → Assessment or failure (tolerant reader, model-agnostic)
+        build-draft-prompt.ts      v2, pure: job + assessment + cv + style guide → prompt
+        parse-draft.ts             v2, pure: DRAFT_SCHEMA + model answer → draft or failure (tolerant reader)
         language-model.ts          v1: LanguageModel type alias + its result type (answer | failure + raw output)
         claude-cli/                v1 impl (`claude -p`) + health check + mapper: CLI envelope → LanguageModel result
       send-daily-digest/           later, 09:00: yesterday's rejects + screening_failed → 1 msg
@@ -67,7 +71,7 @@ auto-apply-for-positions/
       tracker.ts                 * ONE pass: discover-jobs → screen-jobs, then exit
       cli.ts                       later: routes skill commands → save-final-message / save-fit-verdict
   scripts/
-    install-launchd.ts           * writes + loads the launchd plist from config
+    install-launchd.ts           * snapshots code to dist/, writes + loads the launchd plist
   skill/                           later: Claude Code skills
 ```
 
@@ -79,7 +83,7 @@ Principles (vertical slices):
 - Code moves to `shared/` only once a 2nd slice needs it.
 - Slices query Mongo directly through `shared/db.ts`. No repository layer.
 - Contracts (`type` alias, never `interface`) only where a swap is real: `JobSource` (djinni → DOU), `LanguageModel` (CLI → API).
-- Logic vs I/O: pure files (`prefilter`, `details-filter`, `format-ping`, `quiet-hours`, `build-prompt`, `parse-assessment`, djinni RSS parser) hold all decisions → unit tests. I/O wrappers (djinni fetch, Mongo, Telegram, Claude CLI) stay thin, no logic.
+- Logic vs I/O: pure files (`prefilter`, `details-filter`, `format-ping`, `quiet-hours`, `build-screening-prompt`, `parse-assessment`, `build-draft-prompt`, `parse-draft`, djinni RSS parser) hold all decisions → unit tests. I/O wrappers (djinni fetch, Mongo, Telegram, Claude CLI) stay thin, no logic.
 - Don't build what isn't needed yet: `(dou/)`, `(anthropic-api/)`, later files are created only when their version starts.
 
 Adding a site = new folder under `features/discover-jobs/` implementing `JobSource` + adding it to the source list in `discover-jobs.ts`. Nothing else changes.
@@ -116,17 +120,18 @@ Job id = `<source>:<sourceJobId>`, e.g. `djinni:851975`.
 
 ```
 discover-jobs:  fetch feeds → pubDate within lookbackHours (24) → unseen ids → prefilter → details → details filter → save to_screen
-screen-jobs:    each to_screen → Claude (ONE call) → isFit ? to_ping : screening_rejected
-                each to_ping → ping → pinged   (always runs, even when screening stopped on a Claude failure)
+screen-jobs:    each to_screen → Claude screen → isFit ? to_draft : screening_rejected
+                each to_draft  → Claude draft  → to_ping (with draft, or with draftFailure)
+                each to_ping   → ping          → pinged   (always runs, even when a Claude phase stopped on a failure)
 ```
 
 Each rule runs at the first stage that has its data, cheap stages first:
 
-| Stage          | Has                         | Drops                                                                                 |
-| -------------- | --------------------------- | ------------------------------------------------------------------------------------- |
-| prefilter      | title, RSS text             | Lead / Architect / Head of / Principal / CTO title, dealbreaker keywords              |
-| details filter | salary, applicant count     | ≥ 50 applicants; Junior / Intern title with top of salary range < $1k, or no salary   |
-| Claude         | full posting, CV, fit rules | seniority by years, location, hidden dealbreakers, gamedev                            |
+| Stage          | Has                         | Drops                                                                               |
+| -------------- | --------------------------- | ----------------------------------------------------------------------------------- |
+| prefilter      | title, RSS text             | Lead / Architect / Head of / Principal / CTO title, dealbreaker keywords            |
+| details filter | salary, applicant count     | ≥ 50 applicants; Junior / Intern title with top of salary range < $1k, or no salary |
+| Claude         | full posting, CV, fit rules | seniority by years, location, hidden dealbreakers, gamedev                          |
 
 - Junior rule: "top of salary range" = max, else min. `$800–1200` passes. A title that also says Middle / Mid ("Junior/Middle") skips the rule.
 
@@ -141,7 +146,8 @@ Naming rule: a drop is `<stage>_rejected`, a waiting state is `to_<next step>`.
 | `to_screen`          | discover-jobs   | passed every code rule, waiting for Claude                                                  | every pass |
 | `screening_rejected` | screen-jobs     | Claude: not a fit. `rejectReason` = Claude's reason                                         | final      |
 | `screening_failed`   | screen-jobs     | 3 failures blamed on the job. No verdict. Silent until the digest exists                    | final      |
-| `to_ping`            | screen-jobs     | Claude: fit, waiting for the Telegram send                                                  | every pass |
+| `to_draft`           | screen-jobs     | Claude: fit, waiting for the draft call                                                     | next pass  |
+| `to_ping`            | screen-jobs     | draft step done (`draft` or `draftFailure`), waiting for the Telegram send                  | every pass |
 | `pinged`             | screen-jobs     | sent to Telegram                                                                            | no         |
 | `applied`, `bad_fit` | feedback skills | later                                                                                       | final      |
 
@@ -160,20 +166,20 @@ Naming rule: a drop is `<stage>_rejected`, a waiting state is `to_<next step>`.
 - Timeout: 120s per call. A timeout counts as a failure.
 - Boundary: `claude-cli/` maps the CLI envelope into the `LanguageModel` result (answer JSON, or failure + raw output). Nothing outside `claude-cli/` reads CLI fields (`is_error`, `structured_output`, …), so swapping to `anthropic-api` = a new mapper only.
 - Model = config value, default `claude-opus-5-5`.
-- Input: job text, `isEuRemote`, details (incl. `yearsRequired`), `cv.md`, `fit-rules.md`. `style-guide.md` joins in v2 with the draft.
+- Input: job text, `isEuRemote`, details (incl. `yearsRequired`), `cv.md`, `fit-rules.md`. Never `style-guide.md` (only the draft call reads it).
 - Output (`--json-schema`):
 
-| Field           | Kind    | Means                                                                                  | Shows up as                       |
-| --------------- | ------- | -------------------------------------------------------------------------------------- | --------------------------------- |
-| `isFit`         | verdict | yes/no on the whole job                                                                | ping, or `screening_rejected`     |
-| `rejectReason`  | opinion | one line on why not, only when `isFit` is false                                        | job's `rejectReason`              |
-| `fitReasons[]`  | opinion | 1–3 short points on why it fits                                                        | ✅ line                           |
-| `concerns[]`    | opinion | anything to check on a fit: skill gaps, stretch asks, terms ("hybrid 3 days/wk")       | ⚠️ line                           |
+| Field          | Kind    | Means                                                                            | Shows up as                   |
+| -------------- | ------- | -------------------------------------------------------------------------------- | ----------------------------- |
+| `isFit`        | verdict | yes/no on the whole job                                                          | ping, or `screening_rejected` |
+| `rejectReason` | opinion | one line on why not, only when `isFit` is false                                  | job's `rejectReason`          |
+| `fitReasons[]` | opinion | 1–3 short points on why it fits                                                  | ✅ line                       |
+| `concerns[]`   | opinion | anything to check on a fit: skill gaps, stretch asks, terms ("hybrid 3 days/wk") | ⚠️ line                       |
 
 - Years are not asked from Claude: they come from djinni's `experience` field (`details.yearsRequired`).
 - Stored on the job: `rejectReason`, `assessment = { fitReasons, concerns }`, `screeningAttempts`. `assessment` has no reason of its own.
 - Answer check = tolerant reader: requires only `isFit` (boolean) and `rejectReason` when `isFit` is false. Missing lists → `[]`, extra fields ignored.
-- v2 adds `draft` to the same answer → still ONE call per job.
+- v2 draft = a separate call (see Drafting), not a field in this answer.
 - Auth: `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` (Pro/Max subscription). `config.ts` doesn't load it yet → load it and pass it to the child process env.
 - Cost: the CLI adds ~4.2k tokens of its own system prompt even with tools off → ~7k input tokens per call. ~8–16 calls/day (16 jobs passed the prefilter in the last 24h, 55 over 7 days, measured 27 Oct 2026).
 
@@ -189,10 +195,10 @@ Naming rule: a drop is `<stage>_rejected`, a waiting state is `to_<next step>`.
 
 A failed call (error envelope, bad answer, unknown output, timeout) can't tell on its own whether Claude or the job caused it. So after any failure → **health check**: a trivial "reply ok" call with a tiny schema, same model.
 
-| Health check | Blame    | Effect                                                                                                          |
-| ------------ | -------- | --------------------------------------------------------------------------------------------------------------- |
-| fails        | Claude   | stop screening (ping loop still runs), job stays `to_screen`, no try counted, failing flag on                  |
-| passes       | this job | `screeningAttempts` +1, stays `to_screen`, retried next pass. 3rd failure → `screening_failed`                  |
+| Health check | Blame    | Effect                                                                                         |
+| ------------ | -------- | ---------------------------------------------------------------------------------------------- |
+| fails        | Claude   | stop screening (ping loop still runs), job stays `to_screen`, no try counted, failing flag on  |
+| passes       | this job | `screeningAttempts` +1, stays `to_screen`, retried next pass. 3rd failure → `screening_failed` |
 
 - A network blip that gets blamed on the job is fine: the job is judged again next pass.
 - Every failure is logged with the raw CLI output, the job id and the full prompt (the prompt can't be rebuilt later, since knowledge files change). Logs stay local + gitignored, but they contain CV text.
@@ -204,6 +210,24 @@ A failed call (error envelope, bad answer, unknown output, timeout) can't tell o
 - Flag on → every pass starts with the health check, even when no job is `to_screen` (so `✅ Claude back` doesn't wait for a new job). Fails → stop screening quietly (one tiny call per 15 min during an outage, no repeat message).
 - Flag on + health check works → flag off, send `✅ Claude back`, go on screening. Node reads the code fresh each run, so a code fix ends the episode on the next pass. Never flipped by hand.
 
+## Drafting (v2)
+
+- 2nd call, only for `to_draft` jobs. Same CLI flags, model, timeout and Claude gate as screening; one health check per pass covers both. Phases run in batch order: screen all → draft all → ping all.
+- Why not a field in the screening answer: focused prompts, the draft starts from the assessment, and `/final-msg` edits to `style-guide.md` never change screening. Cost: ~7k input tokens + 10–20s per fit.
+- Input: job block, `assessment` (`fitReasons`, `concerns`), `cv.md`, `style-guide.md`. Not `fit-rules.md`: it judges, and the assessment already carries the verdict.
+- Output: `{ draft }`. Tolerant reader: non-empty after trim, extra fields ignored. Empty → counts as a failed call.
+- Stored: `draft` (first AI draft, `/final-msg` matches against it) or `draftFailure: "claude_down" | "call_failed"`.
+- **A draft never blocks a ping.** One try, no `draftAttempts`, no `drafting_failed` status (status = where the job is; a failed draft still moves on):
+
+| Case                               | Effect                                                                                        |
+| ---------------------------------- | --------------------------------------------------------------------------------------------- |
+| draft ok                           | `draft` saved → `to_ping`. Log `screen.job_drafted`                                           |
+| call fails, health check passes    | `draftFailure: "call_failed"` → `to_ping`. Log `screen.drafting_failed` (raw output + prompt) |
+| call fails, health check fails     | flag on, `⚠️ Claude failing`. This + every other `to_draft` job → `"claude_down"` → `to_ping` |
+| flag on at pass start, check fails | no call. Every `to_draft` job → `"claude_down"` → `to_ping`                                   |
+
+- `to_draft` only holds a job across passes if the mac sleeps between screening and drafting. No backfill for jobs pinged in v1.
+
 ## Telegram
 
 - Bot `@djinni_tailored_bot`. **Send-only**: no listener, no buttons, no commands.
@@ -211,7 +235,7 @@ A failed call (error envelope, bad answer, unknown output, timeout) can't tell o
 - Quiet hours: `disable_notification: true` when Kyiv time is inside `quietHours`.
 - v0 ping: title + company, 🇪🇺 if EU-remote, salary, location, `⏱ posted <age> ago` (from `pubDate`, at send time), `👥 <n> applicants` (`applications_count` from discover), link.
 - v1 ping adds: `🎯 <years> yrs` in the terms line (from `details.yearsRequired`, `0` shows as `🎯 0 yrs`, missing → left out), `✅ fit: …` (`fitReasons`), `⚠️ concerns: …` (`concerns`).
-- v2: draft in `<pre>` for tap-to-copy.
+- v2: draft in `<pre>` for tap-to-copy (HTML-escaped). No draft → `✍️ no draft: Claude down` / `✍️ no draft: call failed` from `draftFailure`. Old v1 rows have neither field → neither line.
 - Service messages: `⚠️ Claude failing: …`, `✅ Claude back`.
 - No "from queue" tag: the posted age already shows any delay.
 - Applicants count is the value from discover time, never re-fetched (may show a stale count after a delay; ok, I judge by posted age + when the ping arrived).
@@ -220,12 +244,12 @@ A failed call (error envelope, bad answer, unknown output, timeout) can't tell o
 
 Skills run `node src/app/cli.ts <command>` locally for records (`/final-msg` → `save-final-message`, `/bad-fit` / `/should-have-pinged` → `save-fit-verdict`) and edit `knowledge/*.md` / `config/` directly. No sync needed while everything is on the mac.
 
-| Trigger                                            | Effect                                                                                                                       |
-| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Trigger                                            | Effect                                                                                                                        |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `/final-msg <text>`                                | match draft → save final + comment summary → status `applied` → update `style-guide.md` (marks each note job-only vs general) |
-| `/bad-fit <ping> — <why>` (batch ok, why optional) | status `bad_fit` → update `fit-rules.md`                                                                                     |
-| `/should-have-pinged <link> — <why>`               | update `fit-rules.md`                                                                                                        |
-| `/quiet HH–HH`                                     | edit `config/config.json`                                                                                                    |
+| `/bad-fit <ping> — <why>` (batch ok, why optional) | status `bad_fit` → update `fit-rules.md`                                                                                      |
+| `/should-have-pinged <link> — <why>`               | update `fit-rules.md`                                                                                                         |
+| `/quiet HH–HH`                                     | edit `config/config.json`                                                                                                     |
 
 ## Runtime (mac)
 
@@ -235,8 +259,9 @@ Skills run `node src/app/cli.ts <command>` locally for records (`/final-msg` →
   - launchd never starts a 2nd copy while one is still running.
   - Starts again after reboot/login, no terminal needed.
   - Changing `pollMinutes` → re-run `scripts/install-launchd.ts`.
+  - launchd runs a frozen copy in `dist/` (`src`, `node_modules`, `knowledge`, `config`); edits in the repo apply only after `npm run launchd:install`. Logs stay in the repo `logs/`.
 - Node 24 runs `.ts` directly (type stripping) → no build step. Only erasable TS syntax (no enums, no namespaces).
-- Reads `config/config.json` on each run, so edits apply on the next run.
+- Reads the snapshot `dist/config/config.json` on each run, so repo edits apply after `npm run launchd:install`.
 - `config/config.json`:
   ```JSON
   {

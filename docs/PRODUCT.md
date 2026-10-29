@@ -34,7 +34,7 @@ Tracks new job postings that fit me, has Claude judge each one (and, from v2, dr
 
 | Rule                               | Decision                                                                                                                                                                  |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Seniority                          | Senior is ok; judged by required years (I have 3.5+). Reject clearly-above asks.                                                                                          |
+| Seniority                          | Senior is ok; judged by required years (I have 3.5+). Up to 4 yrs ok; over 4 → reject (EU and non-EU).                                                                    |
 | Location                           | remote; Kharkiv office; hybrid in Lviv or Kyiv. Reject office-only elsewhere.                                                                                             |
 | EU-remote                          | **priority**: 🇪🇺 tag in ping + looser fit (e.g. adjacent technology)                                                                                                      |
 | Dealbreakers                       | personal list in `knowledge/fit-rules.md` (not in the repo)                                                                                                               |
@@ -66,7 +66,8 @@ Every **15 min**, look at jobs from the **last 1 day** that I haven't seen yet, 
 ## Draft message (v2)
 
 - **Always English.**
-- Written by Claude, using CV + style guide + fit rules.
+- Written by Claude in a 2nd call, only for fits, using CV + style guide + Claude's fit reasons and concerns for that job.
+- **A draft never delays a ping.** Draft fails or Claude is down → the ping comes on time without it, with one line saying why: `✍️ no draft: Claude down` / `✍️ no draft: call failed`.
 - Starting voice comes from my 3 past messages (see `knowledge/style-guide.md`).
 - Wins come only from the CV. Claude picks the 1–2 best per job.
 
@@ -100,4 +101,5 @@ Until then: Claude's rejects are in Mongo (status `screening_rejected` + reason,
 - Claude down (usage limit, login, network, a CLI change) → **one** message per outage: `⚠️ Claude failing: <error>`. When it works again: `✅ Claude back`.
 - Jobs found during an outage are not lost. They're judged after it ends; the ping's `⏱ posted … ago` shows the delay.
 - One job keeps failing while Claude works → after 3 tries it's marked `screening_failed`. No ping for it until the digest exists.
+- Claude fails while writing a draft → the job is pinged without a draft (no retry).
 - Model: **Opus 5.5** by default, set by a config value. If limit hits get frequent, switch to Sonnet.

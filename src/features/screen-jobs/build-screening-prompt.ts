@@ -8,7 +8,7 @@ const INSTRUCTIONS = [
   "Write every text field in English, short.",
 ];
 
-export function buildPrompt(job: Job, { cv, fitRules }: Knowledge): string {
+export function buildScreeningPrompt(job: Job, { cv, fitRules }: Knowledge): string {
   return [
     ...INSTRUCTIONS,
     "",

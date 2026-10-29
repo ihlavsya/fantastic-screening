@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { loadConfig, PROJECT_ROOT } from "#shared/config.ts";
@@ -9,11 +9,16 @@ export type LaunchAgent = {
   label: string;
   nodePath: string;
   projectRoot: string;
+  logDir: string;
   intervalSeconds: number;
 };
 
 const LABEL = "local.job-tracker";
 const SECONDS_PER_MINUTE = 60;
+const SNAPSHOT_DIR = resolve(PROJECT_ROOT, "dist");
+const LOG_DIR = resolve(PROJECT_ROOT, "logs");
+const SNAPSHOT_ENTRIES = ["package.json", "src", "node_modules", "knowledge", "config"];
+const TEST_FILE_SUFFIX = ".test.ts";
 const XML_ESCAPES = new Map([
   ["&", "&amp;"],
   ["<", "&lt;"],
@@ -26,20 +31,37 @@ function installLaunchd(): void {
   const agent: LaunchAgent = {
     label: LABEL,
     nodePath: process.execPath,
-    projectRoot: PROJECT_ROOT,
+    projectRoot: SNAPSHOT_DIR,
+    logDir: LOG_DIR,
     intervalSeconds: loadConfig().settings.pollMinutes * SECONDS_PER_MINUTE,
   };
   const plistPath = resolve(homedir(), "Library/LaunchAgents", `${LABEL}.plist`);
-  mkdirSync(resolve(PROJECT_ROOT, "logs"), { recursive: true });
+  takeSnapshot();
+  mkdirSync(LOG_DIR, { recursive: true });
   writeFileSync(plistPath, buildPlist(agent));
   reloadAgent(plistPath);
   logger.info(
-    { eventType: "launchd.installed", plistPath, intervalSeconds: agent.intervalSeconds },
+    { eventType: "launchd.installed", plistPath, snapshotDir: SNAPSHOT_DIR, intervalSeconds: agent.intervalSeconds },
     "launchd agent installed",
   );
 }
 
-export function buildPlist({ label, nodePath, projectRoot, intervalSeconds }: LaunchAgent): string {
+function takeSnapshot(): void {
+  rmSync(SNAPSHOT_DIR, { recursive: true, force: true });
+  SNAPSHOT_ENTRIES.forEach((entry) => {
+    cpSync(resolve(PROJECT_ROOT, entry), resolve(SNAPSHOT_DIR, entry), {
+      recursive: true,
+      verbatimSymlinks: true,
+      filter: checkIsRuntimeFile,
+    });
+  });
+}
+
+function checkIsRuntimeFile(sourcePath: string): boolean {
+  return !sourcePath.endsWith(TEST_FILE_SUFFIX);
+}
+
+export function buildPlist({ label, nodePath, projectRoot, logDir, intervalSeconds }: LaunchAgent): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -58,9 +80,9 @@ export function buildPlist({ label, nodePath, projectRoot, intervalSeconds }: La
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>${escapeXml(resolve(projectRoot, "logs/tracker.log"))}</string>
+  <string>${escapeXml(resolve(logDir, "tracker.log"))}</string>
   <key>StandardErrorPath</key>
-  <string>${escapeXml(resolve(projectRoot, "logs/tracker.err.log"))}</string>
+  <string>${escapeXml(resolve(logDir, "tracker.err.log"))}</string>
 </dict>
 </plist>
 `;
